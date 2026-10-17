@@ -1,0 +1,6 @@
+{
+  "id": "financial-core",
+  "name": "financial-core",
+  "beschreibung": "Buchhaltung für Einzelunternehmen: Belege, Bank, UStVA, EÜR",
+  "quelle": "https://git.brudilabs.com/andreas/financial-core.git"
+}

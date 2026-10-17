@@ -1,0 +1,164 @@
+# Baut eine App aus dem privaten Quell-Repo auf git.brudilabs.com, signiert sie und veröffentlicht
+# sie hier als Release. Danach wird der Katalog (bzw. für den Launcher latest.json) aktualisiert.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: App
+        type: choice
+        options: [financial-core, core-launcher]
+      tag:
+        description: Git-Tag im Quell-Repo, z. B. v0.2.0
+        required: true
+      notizen:
+        description: Neuigkeiten (erscheinen im Launcher)
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  APP: ${{ inputs.app }}
+  TAG: ${{ inputs.tag }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            plattform: linux-x86_64
+          - os: macos-14
+            plattform: darwin-universal
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Quellcode holen
+        env:
+          TOKEN: ${{ secrets.BRUDILABS_GIT_TOKEN }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "Ungültiger Tag: $TAG"; exit 1; }
+          quelle=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['quelle'])" "apps/$APP.json")
+          git clone --depth 1 --branch "$TAG" "${quelle/https:\/\//https://oauth2:$TOKEN@}" src
+          version=$(grep -m1 '^version' src/Cargo.toml | cut -d'"' -f2)
+          [ "v$version" = "$TAG" ] || { echo "Cargo-Version $version passt nicht zu $TAG"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Systempakete (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Bauen
+        run: |
+          npm ci --prefix src/ui
+          cd src/app
+          if [ "$RUNNER_OS" = Linux ]; then
+            ../ui/node_modules/.bin/tauri build --bundles appimage
+          else
+            bundles=app; [ "$APP" = core-launcher ] && bundles=app,dmg
+            ../ui/node_modules/.bin/tauri build --target universal-apple-darwin --bundles "$bundles"
+          fi
+
+      # Signiert wird für alle Apps gleich (die Apps selbst haben keine Updater-Konfiguration):
+      # Linux das AppImage, macOS ein tar.gz des .app-Bündels – beides im Format des Tauri-Updaters.
+      - name: Einsammeln und signieren
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          mkdir dist
+          name="${APP}_${VERSION}_${{ matrix.plattform }}"
+          if [ "$RUNNER_OS" = Linux ]; then
+            cp "$(ls src/target/release/bundle/appimage/*.AppImage | head -1)" "dist/$name.AppImage"
+            datei="dist/$name.AppImage"
+          else
+            b=src/target/universal-apple-darwin/release/bundle
+            buendel=$(cd $b/macos && ls -d *.app | head -1)
+            COPYFILE_DISABLE=1 tar -czf "dist/$name.app.tar.gz" -C "$b/macos" "$buendel"
+            datei="dist/$name.app.tar.gz"
+            if ls $b/dmg/*.dmg >/dev/null 2>&1; then cp "$(ls $b/dmg/*.dmg | head -1)" "dist/$name.dmg"; fi
+          fi
+          src/ui/node_modules/.bin/tauri signer sign "$datei"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.plattform }}
+          path: dist/
+
+  veroeffentlichen:
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Quellpaket (AGPL)
+        env:
+          TOKEN: ${{ secrets.BRUDILABS_GIT_TOKEN }}
+        run: |
+          quelle=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['quelle'])" "apps/$APP.json")
+          git clone --depth 1 --branch "$TAG" "${quelle/https:\/\//https://oauth2:$TOKEN@}" src
+          version=$(grep -m1 '^version' src/Cargo.toml | cut -d'"' -f2)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          git -C src archive --format=tar.gz --prefix="$APP-$version/" -o "../dist/${APP}_${version}_quellcode.tar.gz" HEAD
+
+      - name: Release anlegen
+        env:
+          NOTIZEN: ${{ inputs.notizen }}
+        run: |
+          gh release create "$APP-$TAG" --title "$APP $VERSION" --notes "${NOTIZEN:-$APP $VERSION}" \
+            $(ls dist/* | grep -v '\.sig$')
+
+      - name: Katalog aktualisieren
+        if: inputs.app != 'core-launcher'
+        env:
+          NOTIZEN: ${{ inputs.notizen }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          gh release view katalog >/dev/null 2>&1 || gh release create katalog --title Katalog --notes "App-Katalog für den brudilabs Launcher"
+          gh release download katalog -p catalog.json -D . || true
+          basis="https://github.com/${{ github.repository }}/releases/download/$APP-$TAG"
+          python3 scripts/katalog.py katalog --katalog catalog.json --app "apps/$APP.json" --version "$VERSION" \
+            --basis-url "$basis" --notizen "$NOTIZEN" \
+            linux-x86_64="dist/${APP}_${VERSION}_linux-x86_64.AppImage" \
+            darwin-universal="dist/${APP}_${VERSION}_darwin-universal.app.tar.gz"
+          npx --yes @tauri-apps/cli@2 signer sign catalog.json
+          gh release upload katalog catalog.json catalog.json.sig --clobber
+
+      - name: Launcher-Update (latest.json)
+        if: inputs.app == 'core-launcher'
+        env:
+          NOTIZEN: ${{ inputs.notizen }}
+        run: |
+          basis="https://github.com/${{ github.repository }}/releases/download/$APP-$TAG"
+          python3 scripts/katalog.py launcher --version "$VERSION" --basis-url "$basis" --notizen "$NOTIZEN" \
+            linux-x86_64="dist/${APP}_${VERSION}_linux-x86_64.AppImage" \
+            darwin-universal="dist/${APP}_${VERSION}_darwin-universal.app.tar.gz" > latest.json
+          # Feste Download-Adressen für die Erstinstallation
+          cp "dist/${APP}_${VERSION}_linux-x86_64.AppImage" core-launcher.AppImage
+          cp "dist/${APP}_${VERSION}_darwin-universal.dmg" core-launcher.dmg
+          gh release view launcher >/dev/null 2>&1 || gh release create launcher --title "brudilabs Launcher" --notes "Aktuelle Version des Launchers"
+          gh release upload launcher latest.json core-launcher.AppImage core-launcher.dmg --clobber
