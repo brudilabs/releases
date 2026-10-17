@@ -1,4 +1,4 @@
-# Baut eine App aus dem privaten Quell-Repo auf git.brudilabs.com, signiert sie und veröffentlicht
+# Baut eine App aus ihrem privaten Quell-Repo (Spiegel von git.brudilabs.com), signiert sie und veröffentlicht
 # sie hier als Release. Danach wird der Katalog (bzw. für den Launcher latest.json) aktualisiert.
 name: Release
 
@@ -38,13 +38,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Der Quellcode liegt privat auf git.brudilabs.com und wird beim Push nach brudilabs/<app> (privat) gespiegelt.
+      - name: Tag prüfen
+        run: '[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "Ungültiger Tag: $TAG"; exit 1; }'
+
       - name: Quellcode holen
-        env:
-          TOKEN: ${{ secrets.BRUDILABS_GIT_TOKEN }}
+        uses: actions/checkout@v4
+        with:
+          repository: brudilabs/${{ inputs.app }}
+          ref: refs/tags/${{ inputs.tag }}
+          token: ${{ secrets.QUELLCODE_TOKEN }}
+          path: src
+          persist-credentials: false
+
+      - name: Version prüfen
         run: |
-          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "Ungültiger Tag: $TAG"; exit 1; }
-          quelle=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['quelle'])" "apps/$APP.json")
-          git clone --depth 1 --branch "$TAG" "${quelle/https:\/\//https://oauth2:$TOKEN@}" src
           version=$(grep -m1 '^version' src/Cargo.toml | cut -d'"' -f2)
           [ "v$version" = "$TAG" ] || { echo "Cargo-Version $version passt nicht zu $TAG"; exit 1; }
           echo "VERSION=$version" >> "$GITHUB_ENV"
@@ -114,12 +122,17 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Quellcode holen
+        uses: actions/checkout@v4
+        with:
+          repository: brudilabs/${{ inputs.app }}
+          ref: refs/tags/${{ inputs.tag }}
+          token: ${{ secrets.QUELLCODE_TOKEN }}
+          path: src
+          persist-credentials: false
+
       - name: Quellpaket (AGPL)
-        env:
-          TOKEN: ${{ secrets.BRUDILABS_GIT_TOKEN }}
         run: |
-          quelle=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['quelle'])" "apps/$APP.json")
-          git clone --depth 1 --branch "$TAG" "${quelle/https:\/\//https://oauth2:$TOKEN@}" src
           version=$(grep -m1 '^version' src/Cargo.toml | cut -d'"' -f2)
           echo "VERSION=$version" >> "$GITHUB_ENV"
           git -C src archive --format=tar.gz --prefix="$APP-$version/" -o "../dist/${APP}_${version}_quellcode.tar.gz" HEAD

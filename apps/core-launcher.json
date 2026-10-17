@@ -2,5 +2,5 @@
   "id": "core-launcher",
   "name": "brudilabs Launcher",
   "beschreibung": "Apps installieren, starten und aktualisieren",
-  "quelle": "https://git.brudilabs.com/andreas/core-launcher.git"
+  "quelle": "brudilabs/core-launcher"
 }
