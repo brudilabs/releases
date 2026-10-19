@@ -1,0 +1,6 @@
+{
+  "id": "content-core",
+  "name": "contentCore",
+  "beschreibung": "Inhalte der brudilabs-Websites pflegen und veröffentlichen",
+  "quelle": "brudilabs/content-core"
+}
