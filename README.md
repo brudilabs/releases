@@ -20,6 +20,33 @@ Der Quellcode liegt privat auf git.brudilabs.com (gespiegelt in private GitHub-R
 
 `apps/<id>.json` enthält Name, Beschreibung und das private Quell-Repo `brudilabs/<id>`; `apps/<id>.png` das Symbol im Launcher.
 
+### App-Eintrag: `id` und `name`
+
+| Feld | Beispiel | Bedeutung |
+|---|---|---|
+| `id` | `financial-core` | technisch: Programmname, Wayland-App-ID, Name des Desktop-Eintrags, Release-Präfix, Quell-Repo. **Nie ändern** – sonst gilt die App als neu und Installationen verwaisen. |
+| `name` | `financialCore` | Anzeigename im Launcher und im Startmenü. Der Teil nach der letzten Binnenmajuskel bzw. dem letzten `-` erscheint in Lime. |
+| `beschreibung` | `Buchhaltung für …` | Untertitel der Kachel |
+| `quelle` | `brudilabs/financial-core` | privates GitHub-Repo, aus dem gebaut wird |
+
+Änderungen an `apps/<id>.json` landen erst mit dem **nächsten Release dieser App** im Katalog: Nur der Workflow
+kann den Katalog signieren, und er übernimmt den Eintrag dabei neu.
+
+### Katalog (`catalog.json`, Schema 1)
+
+```json
+{ "schema": 1, "erstellt": "2026-10-17T18:38:31Z",
+  "apps": [{ "id": "financial-core", "name": "financialCore", "beschreibung": "…", "icon": "https://…/apps/financial-core.png",
+    "version": "0.1.1", "notizen": "…",
+    "plattformen": {
+      "linux-x86_64":     { "url": "…/financial-core_0.1.1_linux-x86_64.AppImage", "signatur": "<base64 .sig>", "groesse": 103545336 },
+      "darwin-universal": { "url": "…/financial-core_0.1.1_darwin-universal.app.tar.gz", "signatur": "…", "groesse": 46857935 } } }] }
+```
+
+Der Launcher lehnt Katalog und Downloads ab, wenn die Minisign-Signatur nicht zum eingebauten Schlüssel passt
+(Schlüssel-ID `EF5232272258720C`). Ohne Netz nutzt er den zuletzt geprüften Katalog, nie aber einen mit falscher
+Signatur.
+
 ## Einrichtung (einmalig)
 
 1. Auf GitHub Organisation `brudilabs` und dieses Repo **öffentlich** anlegen, Inhalt pushen.
@@ -46,6 +73,22 @@ Der Quellcode liegt privat auf git.brudilabs.com (gespiegelt in private GitHub-R
 2. Hier *Actions → Release → Run workflow*: App, Tag und Neuigkeiten angeben.
 3. Der Workflow baut Linux + macOS, signiert, legt das Release an und aktualisiert den Katalog
    (bzw. für den Launcher `latest.json`). Installierte Launcher zeigen das Update beim nächsten Start.
+
+## Fehlersuche
+
+| Symptom | Ursache / Abhilfe |
+|---|---|
+| *Quellcode holen*: `unable to update url base from redirection` | Checkout zeigt auf git.brudilabs.com (Authentik-SSO). Der Workflow muss aus dem privaten GitHub-Spiegel bauen; Push-Ziel und `QUELLCODE_TOKEN` prüfen. |
+| *Quellcode holen*: `not found` / 401 | Tag nicht gepusht (`git push origin vX.Y.Z`) oder Token ohne Zugriff auf das Repo. |
+| *Version prüfen* schlägt fehl | `version` in `Cargo.toml` passt nicht zum Tag. |
+| *Einsammeln und signieren* schlägt fehl | Secrets `TAURI_SIGNING_PRIVATE_KEY` / `…_PASSWORD` fehlen oder passen nicht zusammen. |
+| Launcher: „Signatur ungültig …“ | Datei beschädigt oder mit anderem Schlüssel signiert; wird verworfen, die installierte Version bleibt. |
+| Launcher zeigt Name/Beschreibung alt | Katalog noch nicht neu signiert → Release der App laufen lassen (siehe oben). |
+| App startet nicht (Linux, distrobox) | ohne FUSE: der Launcher setzt `APPIMAGE_EXTRACT_AND_RUN=1`; Details in `~/.local/share/brudilabs/logs/launcher.log`. |
+
+Lokal prüfen, ob Katalog und Downloads zum Schlüssel passen: Katalog von
+`https://github.com/brudilabs/releases/releases/download/katalog/catalog.json` laden und mit
+`launcher_core::katalog::laden` / `signatur::pruefen` gegen `OEFFENTLICHER_SCHLUESSEL` prüfen (so am 2026-10-17 geschehen).
 
 ## Weitere App aufnehmen
 
