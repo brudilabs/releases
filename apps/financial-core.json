@@ -1,6 +1,6 @@
 {
   "id": "financial-core",
-  "name": "financial-core",
+  "name": "financialCore",
   "beschreibung": "Buchhaltung für Einzelunternehmen: Belege, Bank, UStVA, EÜR",
   "quelle": "brudilabs/financial-core"
 }
