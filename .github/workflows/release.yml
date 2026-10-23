@@ -177,7 +177,7 @@ jobs:
     steps:
       - name: Eingaben prüfen
         if: inputs.nur_server && inputs.app != 'content-core'
-        run: echo "„Nur Server“ gibt es nur für content-core" && exit 1
+        run: echo 'Nur Server gibt es nur für content-core' && exit 1
 
       - uses: actions/checkout@v4
 
@@ -206,8 +206,13 @@ jobs:
           NOTIZEN: ${{ inputs.notizen }}
         run: |
           # install.sh liegt fest unter dem Release content-server (unten), nicht je Version.
-          gh release create "$APP-$TAG" --title "$APP $VERSION" --notes "${NOTIZEN:-$APP $VERSION}" \
-            $(ls dist/* | grep -v -e '\.sig$' -e '/install\.sh$')
+          mapfile -t dateien < <(find dist -maxdepth 1 -type f ! -name '*.sig' ! -name install.sh | sort)
+          # Gibt es den Release schon (z. B. „nur Server“ nachgereicht), kommen die Dateien dazu.
+          if gh release view "$APP-$TAG" >/dev/null 2>&1; then
+            gh release upload "$APP-$TAG" "${dateien[@]}" --clobber
+          else
+            gh release create "$APP-$TAG" --title "$APP $VERSION" --notes "${NOTIZEN:-$APP $VERSION}" "${dateien[@]}"
+          fi
 
       # Feste Adressen für den Server: install.sh zur Erstinstallation, version.txt für „neueste Version“.
       - name: Server-Zeiger (content-server)
