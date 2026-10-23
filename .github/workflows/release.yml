@@ -1,5 +1,7 @@
 # Baut eine App aus ihrem privaten Quell-Repo (Spiegel von git.brudilabs.com), signiert sie und veröffentlicht
 # sie hier als Release. Danach wird der Katalog (bzw. für den Launcher latest.json) aktualisiert.
+# Für content-core entsteht zusätzlich der Server (Docker-Image + Deploy-Dateien), den deploy/install.sh
+# auf dem VPS installiert; „nur Server“ überspringt die Client-Builds und den Katalog.
 name: Release
 
 on:
@@ -16,6 +18,10 @@ on:
         description: Neuigkeiten (erscheinen im Launcher)
         required: false
         default: ""
+      nur_server:
+        description: Nur den Server bauen (content-core, ohne Client und Katalog)
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -26,6 +32,7 @@ env:
 
 jobs:
   build:
+    if: ${{ !inputs.nur_server }}
     strategy:
       fail-fast: true
       matrix:
@@ -109,12 +116,69 @@ jobs:
           name: ${{ matrix.plattform }}
           path: dist/
 
+  # Server von content-core: dasselbe Image wie deploy/Dockerfile.server, als Datei für docker load.
+  server:
+    if: inputs.app == 'content-core'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Tag prüfen
+        run: '[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "Ungültiger Tag: $TAG"; exit 1; }'
+
+      - name: Quellcode holen
+        uses: actions/checkout@v4
+        with:
+          repository: brudilabs/${{ inputs.app }}
+          ref: refs/tags/${{ inputs.tag }}
+          token: ${{ secrets.QUELLCODE_TOKEN }}
+          path: src
+          persist-credentials: false
+
+      - name: Version prüfen
+        run: |
+          version=$(grep -m1 '^version' src/Cargo.toml | cut -d'"' -f2)
+          [ "v$version" = "$TAG" ] || { echo "Cargo-Version $version passt nicht zu $TAG"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Image bauen
+        uses: docker/build-push-action@v6
+        with:
+          context: src
+          file: src/deploy/Dockerfile.server
+          platforms: linux/amd64
+          tags: content-server:${{ env.VERSION }}
+          load: true
+          cache-from: type=gha,scope=content-server
+          cache-to: type=gha,scope=content-server,mode=max
+
+      - name: Packen
+        run: |
+          mkdir dist
+          name="content-core-server_${VERSION}"
+          docker save "content-server:$VERSION" | gzip -9 > "dist/${name}_linux-x86_64.image.tar.gz"
+          tar -czf "dist/${name}_deploy.tar.gz" -C src/deploy docker-compose.yml caddy ausrollen.sh install.sh
+          (cd dist && sha256sum "${name}_linux-x86_64.image.tar.gz" "${name}_deploy.tar.gz" > "${name}_SHA256SUMS")
+          cp src/deploy/install.sh dist/install.sh
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server
+          path: dist/
+
   veroeffentlichen:
-    needs: build
+    needs: [build, server]
+    # build oder server dürfen übersprungen sein (nur Server bzw. andere App), aber nicht fehlschlagen.
+    if: ${{ always() && !failure() && !cancelled() }}
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Eingaben prüfen
+        if: inputs.nur_server && inputs.app != 'content-core'
+        run: echo "„Nur Server“ gibt es nur für content-core" && exit 1
+
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
@@ -141,11 +205,28 @@ jobs:
         env:
           NOTIZEN: ${{ inputs.notizen }}
         run: |
+          # install.sh liegt fest unter dem Release content-server (unten), nicht je Version.
           gh release create "$APP-$TAG" --title "$APP $VERSION" --notes "${NOTIZEN:-$APP $VERSION}" \
-            $(ls dist/* | grep -v '\.sig$')
+            $(ls dist/* | grep -v -e '\.sig$' -e '/install\.sh$')
+
+      # Feste Adressen für den Server: install.sh zur Erstinstallation, version.txt für „neueste Version“.
+      - name: Server-Zeiger (content-server)
+        if: inputs.app == 'content-core'
+        run: |
+          gh release view content-server >/dev/null 2>&1 || gh release create content-server --title "contentCore-Server" \
+            --notes "Aktuelle Version des contentCore-Servers. Installation: siehe install.sh"
+          # Nur vorwärts und ohne Vorabversionen: version.txt ist das, was „Aktualisieren“ im Client anbietet.
+          bisher=$(gh release download content-server -p version.txt -O - 2>/dev/null || true)
+          neueste=$(printf '%s\n%s\n' "$bisher" "$TAG" | grep -v -e '^$' -e '-' | sort -V | tail -n 1)
+          if [ "$neueste" = "$TAG" ]; then
+            echo "$TAG" > version.txt
+            gh release upload content-server dist/install.sh version.txt --clobber
+          else
+            echo "version.txt bleibt bei $bisher"
+          fi
 
       - name: Katalog aktualisieren
-        if: inputs.app != 'core-launcher'
+        if: inputs.app != 'core-launcher' && !inputs.nur_server
         env:
           NOTIZEN: ${{ inputs.notizen }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

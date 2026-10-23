@@ -11,6 +11,9 @@ Ablauf, Secrets, Katalogformat und Fehlersuche stehen im README.
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Den privaten Schlüssel nie ansehen oder ins Repo legen.
 - Linux auf ubuntu-22.04 (AppImage), macOS auf macos-14 (universal, unsigniert – kein Apple-Account).
 - Katalog-`id` = Programmname, nie ändern; `name` ist Anzeigename (financial-core → „financialCore“).
+- content-core-Releases enthalten auch den Server (Image-Tarball, Deploy-Dateien, SHA256SUMS). Der feste Release
+  `content-server` hält `install.sh` und `version.txt`, die `deploy/install.sh` von contentCore auf dem VPS liest.
+  Dateinamen nicht ändern, ohne `install.sh` anzupassen. Eingabe `nur_server` überspringt Client und Katalog.
 
 ## Stand (2026-10-19)
 - financial-core v0.1.0 veröffentlicht (2026-10-17), Signaturen mit dem echten Schlüssel geprüft.

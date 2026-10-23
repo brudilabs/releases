@@ -17,6 +17,10 @@ Der Quellcode liegt privat auf git.brudilabs.com (gespiegelt in private GitHub-R
 | `katalog`      | `catalog.json` + `catalog.json.sig` (wird bei jedem App-Release überschrieben) |
 | `launcher`     | `latest.json` (Tauri-Updater) und feste Download-Dateien des Launchers |
 | `<app>-vX.Y.Z` | AppImage, `.app.tar.gz`, (Launcher: `.dmg`), Quellpaket             |
+| `content-server` | `install.sh` und `version.txt` (neueste Server-Version von contentCore) |
+
+`content-core-vX.Y.Z` enthält zusätzlich den Server: `content-core-server_X.Y.Z_linux-x86_64.image.tar.gz`
+(Docker-Image für `docker load`), `…_deploy.tar.gz` (Compose, Caddy, Skripte) und `…_SHA256SUMS`.
 
 `apps/<id>.json` enthält Name, Beschreibung und das private Quell-Repo `brudilabs/<id>`; `apps/<id>.png` das Symbol im Launcher.
 
@@ -73,6 +77,20 @@ Signatur.
 2. Hier *Actions → Release → Run workflow*: App, Tag und Neuigkeiten angeben.
 3. Der Workflow baut Linux + macOS, signiert, legt das Release an und aktualisiert den Katalog
    (bzw. für den Launcher `latest.json`). Installierte Launcher zeigen das Update beim nächsten Start.
+4. Bei `content-core` baut er auch den Server und setzt `content-server/version.txt` auf den Tag (nur
+   vorwärts, keine Vorabversionen). Admins sehen das Update danach im Client unter *Server*.
+   **Nur Server** anhaken, um einen Server-Fix ohne Client-Builds und ohne Katalog-Update zu veröffentlichen
+   (eigene Patch-Version, der Client bleibt auf seiner).
+
+### contentCore-Server installieren (VPS)
+
+```sh
+mkdir -p ~/repo/content-core/deploy && cd ~/repo/content-core/deploy
+# .env mit CC_GEHEIMNIS_SCHLUESSEL und CC_OIDC_AUSSTELLER anlegen (siehe contentCore-README)
+curl -fsSLO https://github.com/brudilabs/releases/releases/download/content-server/install.sh
+sh install.sh               # neueste Version
+sh install.sh --einrichten  # Updates aus dem Client (Cronjob)
+```
 
 ## Fehlersuche
 
