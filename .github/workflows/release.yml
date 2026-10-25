@@ -143,6 +143,10 @@ jobs:
 
       - name: Image bauen
         uses: docker/build-push-action@v6
+        env:
+          # Sonst lädt die Action einen Build-Bericht als Artefakt (*.dockerbuild) hoch, an dem
+          # download-artifact in „veroeffentlichen“ scheitert.
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: src
           file: src/deploy/Dockerfile.server
