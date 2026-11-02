@@ -40,7 +40,7 @@ jobs:
         include:
           - os: ubuntu-22.04
             plattform: linux-x86_64
-          - os: macos-14
+          - os: macos-15
             plattform: darwin-universal
     runs-on: ${{ matrix.os }}
     steps:
@@ -179,7 +179,8 @@ jobs:
   veroeffentlichen:
     needs: [build, server]
     # build oder server dürfen übersprungen sein (nur Server bzw. andere App), aber nicht fehlschlagen.
-    if: ${{ always() && !failure() && !cancelled() }}
+    # cancelled() sieht nur den Abbruch des ganzen Laufs, nicht einen abgebrochenen Job (z. B. Runner-Brownout).
+    if: ${{ always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
