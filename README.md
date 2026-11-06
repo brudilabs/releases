@@ -76,7 +76,8 @@ Signatur.
 1. Im Quell-Repo `version` in `Cargo.toml` erhöhen, committen, Tag `vX.Y.Z` setzen und pushen.
 2. Hier *Actions → Release → Run workflow*: App, Tag und Neuigkeiten angeben.
 3. Der Workflow baut Linux + macOS, signiert, legt das Release an und aktualisiert den Katalog
-   (bzw. für den Launcher `latest.json`). Installierte Launcher zeigen das Update beim nächsten Start.
+   (bzw. für den Launcher `latest.json`). Signiert wird im eigenen Job *signieren* – nur dort und beim Katalog
+   liegt der Schlüssel, nie im Build-Job mit den Abhängigkeiten der App. Installierte Launcher zeigen das Update beim nächsten Start.
 4. Bei `content-core` baut er auch den Server und setzt `content-server/version.txt` auf den Tag (nur
    vorwärts, keine Vorabversionen). Admins sehen das Update danach im Client unter *Server*.
    **Nur Server** anhaken, um einen Server-Fix ohne Client-Builds und ohne Katalog-Update zu veröffentlichen
@@ -99,10 +100,16 @@ sh install.sh --einrichten  # Updates aus dem Client (Cronjob)
 | *Quellcode holen*: `unable to update url base from redirection` | Checkout zeigt auf git.brudilabs.com (Authentik-SSO). Der Workflow muss aus dem privaten GitHub-Spiegel bauen; Push-Ziel und `QUELLCODE_TOKEN` prüfen. |
 | *Quellcode holen*: `not found` / 401 | Tag nicht gepusht (`git push origin vX.Y.Z`) oder Token ohne Zugriff auf das Repo. |
 | *Version prüfen* schlägt fehl | `version` in `Cargo.toml` passt nicht zum Tag. |
-| *Einsammeln und signieren* schlägt fehl | Secrets `TAURI_SIGNING_PRIVATE_KEY` / `…_PASSWORD` fehlen oder passen nicht zusammen. |
+| *signieren* schlägt fehl | Secrets `TAURI_SIGNING_PRIVATE_KEY` / `…_PASSWORD` fehlen oder passen nicht zusammen. |
 | Launcher: „Signatur ungültig …“ | Datei beschädigt oder mit anderem Schlüssel signiert; wird verworfen, die installierte Version bleibt. |
 | Launcher zeigt Name/Beschreibung alt | Katalog noch nicht neu signiert → Release der App laufen lassen (siehe oben). |
 | App startet nicht (Linux, distrobox) | ohne FUSE: der Launcher setzt `APPIMAGE_EXTRACT_AND_RUN=1`; Details in `~/.local/share/brudilabs/logs/launcher.log`. |
+
+### Signierwerkzeug aktualisieren
+
+`signer/` enthält nur `@tauri-apps/cli` in exakt gepinnter Version samt `package-lock.json` (Integritäts-Hashes);
+der Workflow installiert es mit `npm ci --ignore-scripts`. Neue Version bewusst und einzeln einspielen:
+`npm install --ignore-scripts --prefix signer --save-exact -D @tauri-apps/cli@<version>`, Lockfile mitcommitten.
 
 Lokal prüfen, ob Katalog und Downloads zum Schlüssel passen: Katalog von
 `https://github.com/brudilabs/releases/releases/download/katalog/catalog.json` laden und mit

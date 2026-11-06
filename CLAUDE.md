@@ -21,5 +21,8 @@ Ablauf, Secrets, Katalogformat und Fehlersuche stehen im README.
 - macOS-Builds gebaut, aber auf keinem Mac getestet.
 
 ## Hinweise
-- Claude kann nicht pushen (keine Zugangsdaten); der Nutzer pusht und startet Workflows.
+- Claude darf pushen und den Workflow per `gh` starten (seit 2026-10-27), je Release vorher kurz fragen.
+- Signierschlüssel nur in den Jobs `signieren` und `veroeffentlichen` (Katalog), beide mit der gepinnten CLI aus
+  `signer/` (`npm ci --ignore-scripts`); nie im Build-Job, wo `npm ci` und der Build der App laufen (seit 2026-11-06).
+  Rechte je Job, nur `veroeffentlichen` hat `contents: write`.
 - `scripts/katalog.py` nur mit Standardbibliothek; kurz testbar mit Dummy-Dateien + `.sig`.

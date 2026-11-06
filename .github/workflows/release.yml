@@ -1,5 +1,6 @@
 # Baut eine App aus ihrem privaten Quell-Repo (Spiegel von git.brudilabs.com), signiert sie und veröffentlicht
-# sie hier als Release. Danach wird der Katalog (bzw. für den Launcher latest.json) aktualisiert.
+# sie hier als Release. Signiert wird in einem eigenen Job (signieren) mit der gepinnten Tauri-CLI aus signer/ –
+# der Signierschlüssel kommt nie in den Build-Job, in dem die Abhängigkeiten der App laufen. Danach wird der Katalog (bzw. für den Launcher latest.json) aktualisiert.
 # Für content-core und market-core entsteht zusätzlich der Server (Docker-Image + Deploy-Dateien), den
 # deploy/install.sh auf dem VPS installiert; „nur Server“ überspringt die Client-Builds und den Katalog.
 # Name des Servers: <app ohne -core>-server (content-server, market-server).
@@ -25,7 +26,7 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   APP: ${{ inputs.app }}
@@ -43,6 +44,8 @@ jobs:
           - os: macos-15
             plattform: darwin-universal
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -91,26 +94,20 @@ jobs:
             ../ui/node_modules/.bin/tauri build --target universal-apple-darwin --bundles "$bundles"
           fi
 
-      # Signiert wird für alle Apps gleich (die Apps selbst haben keine Updater-Konfiguration):
+      # Signiert wird später im Job signieren (für alle Apps gleich, die Apps selbst haben keine Updater-Konfiguration):
       # Linux das AppImage, macOS ein tar.gz des .app-Bündels – beides im Format des Tauri-Updaters.
-      - name: Einsammeln und signieren
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Einsammeln
         run: |
           mkdir dist
           name="${APP}_${VERSION}_${{ matrix.plattform }}"
           if [ "$RUNNER_OS" = Linux ]; then
             cp "$(ls src/target/release/bundle/appimage/*.AppImage | head -1)" "dist/$name.AppImage"
-            datei="dist/$name.AppImage"
           else
             b=src/target/universal-apple-darwin/release/bundle
             buendel=$(cd $b/macos && ls -d *.app | head -1)
             COPYFILE_DISABLE=1 tar -czf "dist/$name.app.tar.gz" -C "$b/macos" "$buendel"
-            datei="dist/$name.app.tar.gz"
             if ls $b/dmg/*.dmg >/dev/null 2>&1; then cp "$(ls $b/dmg/*.dmg | head -1)" "dist/$name.dmg"; fi
           fi
-          src/ui/node_modules/.bin/tauri signer sign "$datei"
           ls -la dist
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -118,10 +115,55 @@ jobs:
           name: ${{ matrix.plattform }}
           path: dist/
 
+  # Nur hier liegt der Signierschlüssel: kein Quellcode der App, keine ihrer Abhängigkeiten, nur die Tauri-CLI in
+  # exakt der Version aus signer/package-lock.json (Integritäts-Hashes), ohne Install-Skripte.
+  signieren:
+    needs: build
+    if: ${{ !inputs.nur_server }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: '{linux-x86_64,darwin-universal}'
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Signierwerkzeug (gepinnt)
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix signer
+
+      - name: Signieren
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          shopt -s nullglob
+          dateien=(dist/*.AppImage dist/*.app.tar.gz)
+          [ ${#dateien[@]} -eq 2 ] || { echo "Erwartet AppImage + app.tar.gz, gefunden: ${dateien[*]}"; exit 1; }
+          for datei in "${dateien[@]}"; do signer/node_modules/.bin/tauri signer sign "$datei"; done
+          mkdir sig && mv dist/*.sig sig/
+          ls -la sig
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signaturen
+          path: sig/
+
   # Server von content-core und market-core: dasselbe Image wie deploy/Dockerfile.server, als Datei für docker load.
   server:
     if: inputs.app == 'content-core' || inputs.app == 'market-core'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - name: Tag prüfen
         run: '[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "Ungültiger Tag: $TAG"; exit 1; }'
@@ -177,11 +219,13 @@ jobs:
           path: dist/
 
   veroeffentlichen:
-    needs: [build, server]
-    # build oder server dürfen übersprungen sein (nur Server bzw. andere App), aber nicht fehlschlagen.
+    needs: [build, signieren, server]
+    # build/signieren oder server dürfen übersprungen sein (nur Server bzw. andere App), aber nicht fehlschlagen.
     # cancelled() sieht nur den Abbruch des ganzen Laufs, nicht einen abgebrochenen Job (z. B. Runner-Brownout).
     if: ${{ always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -256,7 +300,8 @@ jobs:
             --basis-url "$basis" --notizen "$NOTIZEN" \
             linux-x86_64="dist/${APP}_${VERSION}_linux-x86_64.AppImage" \
             darwin-universal="dist/${APP}_${VERSION}_darwin-universal.app.tar.gz"
-          npx --yes @tauri-apps/cli@2 signer sign catalog.json
+          npm ci --ignore-scripts --no-audit --no-fund --prefix signer
+          signer/node_modules/.bin/tauri signer sign catalog.json
           gh release upload katalog catalog.json catalog.json.sig --clobber
 
       - name: Launcher-Update (latest.json)

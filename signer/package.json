@@ -1,0 +1,8 @@
+{
+  "name": "brudilabs-signer",
+  "private": true,
+  "description": "Nur zum Signieren im Release-Workflow (Job „signieren“): Tauri-CLI exakt gepinnt, Lockfile mit Integritäts-Hashes.",
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}
