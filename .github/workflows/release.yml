@@ -220,9 +220,14 @@ jobs:
 
   veroeffentlichen:
     needs: [build, signieren, server]
-    # build/signieren oder server dürfen übersprungen sein (nur Server bzw. andere App), aber nicht fehlschlagen.
-    # cancelled() sieht nur den Abbruch des ganzen Laufs, nicht einen abgebrochenen Job (z. B. Runner-Brownout).
-    if: ${{ always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    # Positiv prüfen statt Fehler ausschließen: Bricht ein Matrix-Build ab (z. B. kein macOS-Runner frei), wird
+    # signieren übersprungen, und „nichts fehlgeschlagen“ ließ ein Release ohne Signaturen und Katalog entstehen.
+    # Ohne „nur Server“ müssen build und signieren gelaufen sein, bei content-/market-core auch server.
+    # always() ist nötig, damit der Job trotz übersprungener Abhängigkeiten (nur Server, andere App) startet.
+    if: >-
+      ${{ always()
+        && (inputs.nur_server || (needs.build.result == 'success' && needs.signieren.result == 'success'))
+        && (needs.server.result == 'success' || (inputs.app != 'content-core' && inputs.app != 'market-core')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
