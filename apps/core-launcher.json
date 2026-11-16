@@ -2,5 +2,6 @@
   "id": "core-launcher",
   "name": "brudilabs Launcher",
   "beschreibung": "Apps installieren, starten und aktualisieren",
-  "quelle": "brudilabs/core-launcher"
+  "quelle": "brudilabs/core-launcher",
+  "windows": true
 }

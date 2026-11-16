@@ -10,6 +10,9 @@ Ablauf, Secrets, Katalogformat und Fehlersuche stehen im README.
 - Repository-Secrets: `QUELLCODE_TOKEN` (fine-grained, Contents read-only), `TAURI_SIGNING_PRIVATE_KEY`,
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Den privaten Schlüssel nie ansehen oder ins Repo legen.
 - Linux auf ubuntu-22.04 (AppImage), macOS auf macos-15 (universal, unsigniert – kein Apple-Account).
+- Windows auf windows-2022, nur für Apps mit `"windows": true` in `apps/<id>.json` (Job `plan` baut die Matrix):
+  Apps als einzelne exe (`tauri build --no-bundle`), der Launcher als NSIS-Setup (currentUser). Unsigniert
+  (SmartScreen), Minisign wie überall. Seit 2026-11: content-core und core-launcher.
 - Katalog-`id` = Programmname, nie ändern; `name` ist Anzeigename (financial-core → „financialCore“).
 - content-core-Releases enthalten auch den Server (Image-Tarball, Deploy-Dateien, SHA256SUMS). Der feste Release
   `content-server` hält `install.sh` und `version.txt`, die `deploy/install.sh` von contentCore auf dem VPS liest.

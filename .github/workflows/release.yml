@@ -4,6 +4,8 @@
 # Für content-core und market-core entsteht zusätzlich der Server (Docker-Image + Deploy-Dateien), den
 # deploy/install.sh auf dem VPS installiert; „nur Server“ überspringt die Client-Builds und den Katalog.
 # Name des Servers: <app ohne -core>-server (content-server, market-server).
+# Windows nur für Apps mit "windows": true in apps/<id>.json (Job plan): Apps als einzelne exe, der Launcher als
+# NSIS-Setup. Unsigniert (kein Code-Signing-Zertifikat), Minisign-Signatur wie bei Linux und macOS.
 name: Release
 
 on:
@@ -33,19 +35,40 @@ env:
   TAG: ${{ inputs.tag }}
 
 jobs:
+  # Plattformen der App: Linux und macOS immer, Windows nur mit "windows": true in apps/<id>.json.
+  plan:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      windows: ${{ steps.plan.outputs.windows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: plan
+        run: |
+          windows=$(python3 -c 'import json, sys; print(str(json.load(open(sys.argv[1])).get("windows", False)).lower())' "apps/$APP.json")
+          eintraege='{"os":"ubuntu-22.04","plattform":"linux-x86_64"},{"os":"macos-15","plattform":"darwin-universal"}'
+          [ "$windows" = true ] && eintraege="$eintraege"',{"os":"windows-2022","plattform":"windows-x86_64"}'
+          echo "matrix={\"include\":[$eintraege]}" >> "$GITHUB_OUTPUT"
+          echo "windows=$windows" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: plan
     if: ${{ !inputs.nur_server }}
     strategy:
       fail-fast: true
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            plattform: linux-x86_64
-          - os: macos-15
-            plattform: darwin-universal
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
+    # Auch unter Windows bash (Git Bash), damit alle Schritte gleich bleiben.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -89,19 +112,33 @@ jobs:
           cd src/app
           if [ "$RUNNER_OS" = Linux ]; then
             ../ui/node_modules/.bin/tauri build --bundles appimage
+          elif [ "$RUNNER_OS" = Windows ]; then
+            # Apps: nur die exe (der Launcher legt sie ab), der Launcher selbst: NSIS-Setup.
+            if [ "$APP" = core-launcher ]; then
+              ../ui/node_modules/.bin/tauri build --bundles nsis
+            else
+              ../ui/node_modules/.bin/tauri build --no-bundle
+            fi
           else
             bundles=app; [ "$APP" = core-launcher ] && bundles=app,dmg
             ../ui/node_modules/.bin/tauri build --target universal-apple-darwin --bundles "$bundles"
           fi
 
       # Signiert wird später im Job signieren (für alle Apps gleich, die Apps selbst haben keine Updater-Konfiguration):
-      # Linux das AppImage, macOS ein tar.gz des .app-Bündels – beides im Format des Tauri-Updaters.
+      # Linux das AppImage, macOS ein tar.gz des .app-Bündels, Windows die exe bzw. das Setup des Launchers –
+      # alles im Format des Tauri-Updaters.
       - name: Einsammeln
         run: |
           mkdir dist
           name="${APP}_${VERSION}_${{ matrix.plattform }}"
           if [ "$RUNNER_OS" = Linux ]; then
             cp "$(ls src/target/release/bundle/appimage/*.AppImage | head -1)" "dist/$name.AppImage"
+          elif [ "$RUNNER_OS" = Windows ]; then
+            if [ "$APP" = core-launcher ]; then
+              cp "$(ls src/target/release/bundle/nsis/*-setup.exe | head -1)" "dist/$name-setup.exe"
+            else
+              cp "src/target/release/$APP.exe" "dist/$name.exe"
+            fi
           else
             b=src/target/universal-apple-darwin/release/bundle
             buendel=$(cd $b/macos && ls -d *.app | head -1)
@@ -118,7 +155,7 @@ jobs:
   # Nur hier liegt der Signierschlüssel: kein Quellcode der App, keine ihrer Abhängigkeiten, nur die Tauri-CLI in
   # exakt der Version aus signer/package-lock.json (Integritäts-Hashes), ohne Install-Skripte.
   signieren:
-    needs: build
+    needs: [plan, build]
     if: ${{ !inputs.nur_server }}
     runs-on: ubuntu-24.04
     permissions:
@@ -130,7 +167,7 @@ jobs:
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: '{linux-x86_64,darwin-universal}'
+          pattern: '{linux-x86_64,darwin-universal,windows-x86_64}'
           path: dist
           merge-multiple: true
 
@@ -145,10 +182,12 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          WINDOWS: ${{ needs.plan.outputs.windows }}
         run: |
           shopt -s nullglob
-          dateien=(dist/*.AppImage dist/*.app.tar.gz)
-          [ ${#dateien[@]} -eq 2 ] || { echo "Erwartet AppImage + app.tar.gz, gefunden: ${dateien[*]}"; exit 1; }
+          dateien=(dist/*.AppImage dist/*.app.tar.gz dist/*.exe)
+          erwartet=2; [ "$WINDOWS" = true ] && erwartet=3
+          [ ${#dateien[@]} -eq $erwartet ] || { echo "Erwartet $erwartet Dateien (AppImage, app.tar.gz, ggf. exe), gefunden: ${dateien[*]}"; exit 1; }
           for datei in "${dateien[@]}"; do signer/node_modules/.bin/tauri signer sign "$datei"; done
           mkdir sig && mv dist/*.sig sig/
           ls -la sig
@@ -219,7 +258,7 @@ jobs:
           path: dist/
 
   veroeffentlichen:
-    needs: [build, signieren, server]
+    needs: [plan, build, signieren, server]
     # Positiv prüfen statt Fehler ausschließen: Bricht ein Matrix-Build ab (z. B. kein macOS-Runner frei), wird
     # signieren übersprungen, und „nichts fehlgeschlagen“ ließ ein Release ohne Signaturen und Katalog entstehen.
     # Ohne „nur Server“ müssen build und signieren gelaufen sein, bei content-/market-core auch server.
@@ -301,10 +340,14 @@ jobs:
           gh release view katalog >/dev/null 2>&1 || gh release create katalog --title Katalog --notes "App-Katalog für den brudilabs Launcher"
           gh release download katalog -p catalog.json -D . || true
           basis="https://github.com/${{ github.repository }}/releases/download/$APP-$TAG"
+          windows=()
+          if [ "${{ needs.plan.outputs.windows }}" = true ]; then
+            windows=(windows-x86_64="dist/${APP}_${VERSION}_windows-x86_64.exe")
+          fi
           python3 scripts/katalog.py katalog --katalog catalog.json --app "apps/$APP.json" --version "$VERSION" \
             --basis-url "$basis" --notizen "$NOTIZEN" \
             linux-x86_64="dist/${APP}_${VERSION}_linux-x86_64.AppImage" \
-            darwin-universal="dist/${APP}_${VERSION}_darwin-universal.app.tar.gz"
+            darwin-universal="dist/${APP}_${VERSION}_darwin-universal.app.tar.gz" "${windows[@]}"
           npm ci --ignore-scripts --no-audit --no-fund --prefix signer
           signer/node_modules/.bin/tauri signer sign catalog.json
           gh release upload katalog catalog.json catalog.json.sig --clobber
@@ -315,11 +358,20 @@ jobs:
           NOTIZEN: ${{ inputs.notizen }}
         run: |
           basis="https://github.com/${{ github.repository }}/releases/download/$APP-$TAG"
+          windows=()
+          if [ "${{ needs.plan.outputs.windows }}" = true ]; then
+            windows=(windows-x86_64="dist/${APP}_${VERSION}_windows-x86_64-setup.exe")
+          fi
           python3 scripts/katalog.py launcher --version "$VERSION" --basis-url "$basis" --notizen "$NOTIZEN" \
             linux-x86_64="dist/${APP}_${VERSION}_linux-x86_64.AppImage" \
-            darwin-universal="dist/${APP}_${VERSION}_darwin-universal.app.tar.gz" > latest.json
+            darwin-universal="dist/${APP}_${VERSION}_darwin-universal.app.tar.gz" "${windows[@]}" > latest.json
           # Feste Download-Adressen für die Erstinstallation
           cp "dist/${APP}_${VERSION}_linux-x86_64.AppImage" core-launcher.AppImage
           cp "dist/${APP}_${VERSION}_darwin-universal.dmg" core-launcher.dmg
+          dateien=(latest.json core-launcher.AppImage core-launcher.dmg)
+          if [ "${{ needs.plan.outputs.windows }}" = true ]; then
+            cp "dist/${APP}_${VERSION}_windows-x86_64-setup.exe" core-launcher-setup.exe
+            dateien+=(core-launcher-setup.exe)
+          fi
           gh release view launcher >/dev/null 2>&1 || gh release create launcher --title "brudilabs Launcher" --notes "Aktuelle Version des Launchers"
-          gh release upload launcher latest.json core-launcher.AppImage core-launcher.dmg --clobber
+          gh release upload launcher "${dateien[@]}" --clobber

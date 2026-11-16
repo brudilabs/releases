@@ -9,6 +9,9 @@ Der Quellcode liegt privat auf git.brudilabs.com (gespiegelt in private GitHub-R
   – ausführbar machen (`chmod +x`) und starten; er legt sich selbst einen Startmenü-Eintrag an.
 - macOS: [core-launcher.dmg](https://github.com/brudilabs/releases/releases/download/launcher/core-launcher.dmg)
   – noch nicht notarisiert: beim ersten Öffnen *Systemeinstellungen → Datenschutz & Sicherheit → Trotzdem öffnen*.
+- Windows: [core-launcher-setup.exe](https://github.com/brudilabs/releases/releases/download/launcher/core-launcher-setup.exe)
+  – installiert ohne Adminrechte. Noch nicht signiert: SmartScreen meldet „Unbekannter Herausgeber“, dann
+  *Weitere Informationen → Trotzdem ausführen*.
 
 ## Aufbau
 
@@ -16,7 +19,7 @@ Der Quellcode liegt privat auf git.brudilabs.com (gespiegelt in private GitHub-R
 |----------------|---------------------------------------------------------------------|
 | `katalog`      | `catalog.json` + `catalog.json.sig` (wird bei jedem App-Release überschrieben) |
 | `launcher`     | `latest.json` (Tauri-Updater) und feste Download-Dateien des Launchers |
-| `<app>-vX.Y.Z` | AppImage, `.app.tar.gz`, (Launcher: `.dmg`), Quellpaket             |
+| `<app>-vX.Y.Z` | AppImage, `.app.tar.gz`, ggf. Windows-`.exe` (Launcher: `.dmg`, `-setup.exe`), Quellpaket |
 | `content-server` | `install.sh` und `version.txt` (neueste Server-Version von contentCore) |
 
 `content-core-vX.Y.Z` enthält zusätzlich den Server: `content-core-server_X.Y.Z_linux-x86_64.image.tar.gz`
@@ -32,6 +35,7 @@ Der Quellcode liegt privat auf git.brudilabs.com (gespiegelt in private GitHub-R
 | `name` | `financialCore` | Anzeigename im Launcher und im Startmenü. Der Teil nach der letzten Binnenmajuskel bzw. dem letzten `-` erscheint in Lime. |
 | `beschreibung` | `Buchhaltung für …` | Untertitel der Kachel |
 | `quelle` | `brudilabs/financial-core` | privates GitHub-Repo, aus dem gebaut wird |
+| `windows` | `true` | optional: auch für Windows bauen (`windows-x86_64`). Erst setzen, wenn die App unter Windows baut und läuft. |
 
 Änderungen an `apps/<id>.json` landen erst mit dem **nächsten Release dieser App** im Katalog: Nur der Workflow
 kann den Katalog signieren, und er übernimmt den Eintrag dabei neu.

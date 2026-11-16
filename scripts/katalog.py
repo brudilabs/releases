@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, timezone
 
 ICON_BASIS = "https://raw.githubusercontent.com/brudilabs/releases/main/apps"
-PLATTFORMEN = {"linux-x86_64", "linux-aarch64", "darwin-universal", "darwin-aarch64", "darwin-x86_64"}
+PLATTFORMEN = {"linux-x86_64", "linux-aarch64", "darwin-universal", "darwin-aarch64", "darwin-x86_64", "windows-x86_64"}
 
 
 def artefakte(paare, basis_url):
