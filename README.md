@@ -20,10 +20,11 @@ Der Quellcode liegt privat auf git.brudilabs.com (gespiegelt in private GitHub-R
 | `katalog`      | `catalog.json` + `catalog.json.sig` (wird bei jedem App-Release überschrieben) |
 | `launcher`     | `latest.json` (Tauri-Updater) und feste Download-Dateien des Launchers |
 | `<app>-vX.Y.Z` | AppImage, `.app.tar.gz`, ggf. Windows-`.exe` (Launcher: `.dmg`, `-setup.exe`), Quellpaket |
-| `content-server` | `install.sh` und `version.txt` (neueste Server-Version von contentCore) |
+| `content-server` | `install.sh`, `install.sh.sig` und `version.txt` (neueste Server-Version von contentCore) |
 
 `content-core-vX.Y.Z` enthält zusätzlich den Server: `content-core-server_X.Y.Z_linux-x86_64.image.tar.gz`
-(Docker-Image für `docker load`), `…_deploy.tar.gz` (Compose, Caddy, Skripte) und `…_SHA256SUMS`.
+(Docker-Image für `docker load`), `…_deploy.tar.gz` (Compose, Caddy, Skripte), `…_SHA256SUMS` und
+`…_SHA256SUMS.sig` (minisign, Schlüssel der Apps). `install.sh` spielt nur ein, wenn die Signatur passt.
 
 `apps/<id>.json` enthält Name, Beschreibung und das private Quell-Repo `brudilabs/<id>`; `apps/<id>.png` das Symbol im Launcher.
 
@@ -93,6 +94,10 @@ Signatur.
 mkdir -p ~/repo/content-core/deploy && cd ~/repo/content-core/deploy
 # .env mit CC_GEHEIMNIS_SCHLUESSEL und CC_OIDC_AUSSTELLER anlegen (siehe contentCore-README)
 curl -fsSLO https://github.com/brudilabs/releases/releases/download/content-server/install.sh
+curl -fsSLO https://github.com/brudilabs/releases/releases/download/content-server/install.sh.sig
+# Prüfen mit dem öffentlichen Schlüssel aus einer eigenen Quelle (core-launcher, contentCore/docs/server.md),
+# nicht aus diesem Repo: base64 -d install.sh.sig > install.sh.minisig
+minisign -Vm install.sh -x install.sh.minisig -P RWQMclgiJzJS7yarF49+7/e6DarcTxu7OFiUGfpVdSIxdXX76nYScIV/
 sh install.sh               # neueste Version
 sh install.sh --einrichten  # Updates aus dem Client (Cronjob)
 ```

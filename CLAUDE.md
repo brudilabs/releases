@@ -17,6 +17,9 @@ Ablauf, Secrets, Katalogformat und Fehlersuche stehen im README.
 - content-core-Releases enthalten auch den Server (Image-Tarball, Deploy-Dateien, SHA256SUMS). Der feste Release
   `content-server` hält `install.sh` und `version.txt`, die `deploy/install.sh` von contentCore auf dem VPS liest.
   Dateinamen nicht ändern, ohne `install.sh` anzupassen. Eingabe `nur_server` überspringt Client und Katalog.
+- Server-Releases sind signiert (seit 2026-11-17, Schritt „Server signieren“ in `veroeffentlichen`): `…_SHA256SUMS.sig`
+  im Versions-Release, `install.sh.sig` im festen Release. `install.sh` (ab contentCore 0.15.0) bricht ohne gültige
+  Signatur ab und prüft `file:` im trusted comment – Signaturdateien nie umbenennen.
 
 ## Stand (2026-10-19)
 - financial-core v0.1.0 veröffentlicht (2026-10-17), Signaturen mit dem echten Schlüssel geprüft.

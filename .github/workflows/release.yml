@@ -299,12 +299,28 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
           git -C src archive --format=tar.gz --prefix="$APP-$version/" -o "../dist/${APP}_${version}_quellcode.tar.gz" HEAD
 
+      # install.sh prüft vor dem Ausrollen die Signatur von SHA256SUMS (deckt Image und Deploy-Dateien ab).
+      # install.sh selbst wird signiert, damit die Erstinstallation prüfbar ist (install.sh --signatur-pruefen).
+      - name: Server signieren
+        if: inputs.app == 'content-core' || inputs.app == 'market-core'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund --prefix signer
+          summen=(dist/*_SHA256SUMS)
+          [ ${#summen[@]} -eq 1 ] || { echo "Erwartet genau eine SHA256SUMS, gefunden: ${summen[*]}"; exit 1; }
+          signer/node_modules/.bin/tauri signer sign "${summen[0]}"
+          signer/node_modules/.bin/tauri signer sign dist/install.sh
+
       - name: Release anlegen
         env:
           NOTIZEN: ${{ inputs.notizen }}
         run: |
           # install.sh liegt fest unter dem Release content-server bzw. market-server (unten), nicht je Version.
-          mapfile -t dateien < <(find dist -maxdepth 1 -type f ! -name '*.sig' ! -name install.sh | sort)
+          # Von den Signaturen gehört nur die von SHA256SUMS in den Release (die der Apps stehen im Katalog).
+          mapfile -t dateien < <(find dist -maxdepth 1 -type f \( ! -name '*.sig' -o -name '*_SHA256SUMS.sig' \) \
+            ! -name 'install.sh*' | sort)
           # Gibt es den Release schon (z. B. „nur Server“ nachgereicht), kommen die Dateien dazu.
           if gh release view "$APP-$TAG" >/dev/null 2>&1; then
             gh release upload "$APP-$TAG" "${dateien[@]}" --clobber
@@ -325,7 +341,7 @@ jobs:
           neueste=$(printf '%s\n%s\n' "$bisher" "$TAG" | grep -v -e '^$' -e '-' | sort -V | tail -n 1)
           if [ "$neueste" = "$TAG" ]; then
             echo "$TAG" > version.txt
-            gh release upload "$server" dist/install.sh version.txt --clobber
+            gh release upload "$server" dist/install.sh dist/install.sh.sig version.txt --clobber
           else
             echo "version.txt bleibt bei $bisher"
           fi
